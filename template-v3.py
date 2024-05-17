@@ -3,8 +3,8 @@ import numpy as np
 import glob
 
 # Load the HVAC drawing image
-#image_path = "images/hus_5-01.png"
-image_path = "images/image-2.png"
+image_path = "images/image-3.png"
+#image_path = "images/hus_5-11.png"
 image = cv2.imread(image_path)
 gray_image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
 
@@ -12,7 +12,7 @@ gray_image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
 inlet_templates = [cv2.imread(file, 0) for file in glob.glob("templates/inlet/*.png")]
 outlet_templates = [cv2.imread(file, 0) for file in glob.glob("templates/outlet/*.png")]
 muffler_templates = [cv2.imread(file, 0) for file in glob.glob("templates/muffler/*.png")]
-
+                                                              
 def rotate_image(image, angle):
     (h, w) = image.shape[:2]
     center = (w / 2, h / 2)
@@ -20,18 +20,8 @@ def rotate_image(image, angle):
     rotated = cv2.warpAffine(image, M, (w, h))
     return rotated
 
-def match_template_with_rotation(image, templates, threshold=0.6):
-    locations = []
-    for template in templates:
-        for angle in range(0, 360, 30):  # Rotate templates every 30 degrees
-            rotated_template = rotate_image(template, angle)
-            result = cv2.matchTemplate(image, rotated_template, cv2.TM_CCOEFF_NORMED)
-            loc = np.where(result >= threshold)
-            for pt in zip(*loc[::-1]):
-                locations.append((pt, rotated_template.shape[::-1]))
-    return locations
-
-def match_template_with_rotation_v2(image, templates, threshold=0.8):
+def match_template_with_rotation(image, templates, threshold=0.70):
+    print("Matching templates with rotation...")
     boxes = []
     for template in templates:
         for angle in range(0, 360, 30):  # Rotate templates every 30 degrees
@@ -42,20 +32,16 @@ def match_template_with_rotation_v2(image, templates, threshold=0.8):
                 boxes.append([pt[0], pt[1], pt[0] + rotated_template.shape[1], pt[1] + rotated_template.shape[0]])
     return np.array(boxes)
 
-def match_template(image, templates, threshold=0.8):
-    locations = []
-    for template in templates:
-        result = cv2.matchTemplate(image, template, cv2.TM_CCOEFF_NORMED)
-        loc = np.where(result >= threshold)
-        for pt in zip(*loc[::-1]):
-                    locations.append((pt, template.shape[::-1]))
-    return locations
-
 def non_max_suppression_fast(boxes, overlap_thresh=0.3):
     if len(boxes) == 0:
         return []
     
+    print("Applying Non-Maximum Suppression...")
+    # Ensure boxes is a 2D array
     boxes = np.array(boxes)
+    if boxes.ndim == 1:
+        boxes = np.expand_dims(boxes, axis=0)
+    
     pick = []
     
     x1 = boxes[:, 0]
@@ -86,37 +72,43 @@ def non_max_suppression_fast(boxes, overlap_thresh=0.3):
     return boxes[pick].astype("int")
 
 # Match templates for inlets and outlets
-inlet_locations =   match_template_with_rotation_v2(gray_image, inlet_templates)
-outlet_locations =  match_template_with_rotation_v2(gray_image, outlet_templates)
-muffler_locations = match_template_with_rotation_v2(gray_image, muffler_templates, threshold=0.8)
+inlet_boxes = match_template_with_rotation(gray_image, inlet_templates, threshold=0.75)
+outlet_boxes = match_template_with_rotation(gray_image, outlet_templates, threshold=0.75)
+muffler_boxes = match_template_with_rotation(gray_image, muffler_templates, threshold=0.65)
 
-# Apply non-maximum suppression to remove overlapping bounding boxes
-inlet_locations = non_max_suppression_fast(inlet_locations)
-outlet_locations = non_max_suppression_fast(outlet_locations)
-#muffler_locations = non_max_suppression_fast(muffler_locations)
+# Debug print to check the shapes
+print("Inlet boxes shape:", inlet_boxes.shape)
+print("Outlet boxes shape:", outlet_boxes.shape)
+print("Muffler boxes shape:", muffler_boxes.shape)
 
+# Apply Non-Maximum Suppression
+inlet_boxes_nms = non_max_suppression_fast(inlet_boxes)
+outlet_boxes_nms = non_max_suppression_fast(outlet_boxes)
+muffler_boxes_nms = non_max_suppression_fast(muffler_boxes)
 
 # Draw rectangles for inlets
-for (pt, size) in inlet_locations:
-    cv2.rectangle(image, pt, (pt[0] + size[1], pt[1] + size[0]), (0, 255, 0), 2)
-    cv2.putText(image, 'Inlet', (pt[0], pt[1] - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+for (x1, y1, x2, y2) in inlet_boxes_nms:
+    cv2.rectangle(image, (x1, y1), (x2, y2), (0, 255, 0), 2)
+    cv2.putText(image, 'Inlet', (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
 
 # Draw rectangles for outlets
-for (pt, size) in outlet_locations:
-    cv2.rectangle(image, pt, (pt[0] + size[1], pt[1] + size[0]), (0, 0, 255), 2)
-    cv2.putText(image, 'Outlet', (pt[0], pt[1] - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
+for (x1, y1, x2, y2) in outlet_boxes_nms:
+    cv2.rectangle(image, (x1, y1), (x2, y2), (0, 0, 255), 2)
+    cv2.putText(image, 'Outlet', (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
 
 # Draw rectangles for mufflers
-for (pt, size) in muffler_locations:
-    cv2.rectangle(image, pt, (pt[0] + size[1], pt[1] + size[0]), (255, 0, 255), 2)
-    cv2.putText(image, 'Muffler', (pt[0], pt[1] - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 0, 255), 2)
+for (x1, y1, x2, y2) in muffler_boxes_nms:
+    cv2.rectangle(image, (x1, y1), (x2, y2), (255, 0, 0), 2)
+    cv2.putText(image, 'Muffler', (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 2)
+
 
 # save imag eto disk
 cv2.imwrite('output.png', image)
 
-print("Inlets: ", len(inlet_locations))
-print("Outlets: ", len(outlet_locations))
-print("Mufflers: ", len(muffler_locations))
+print("Inlets: ", len(inlet_boxes_nms))
+print("Outlets: ", len(outlet_boxes_nms))
+print("Mufflers: ", len(muffler_boxes_nms))
+
 
 # Show the output image
 #cv2.imshow("Detected Inlets and Outlets", image)
